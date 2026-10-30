@@ -1,0 +1,6 @@
+/build/
+/.mygo/
+/probe
+*.wav
+*.log
+.DS_Store

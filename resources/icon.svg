@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Sotto">
+  <!--
+    sotto · 应用图标
+    语义：五根圆头竖柱 = 声波（和菜单栏图标同构）；中间最高、两侧递减，
+    表示"正在收听的低声说话"。配色沿用产品规范：
+      暖白 #FAF8F4 / off-black #1D1D1F / 琥珀棕 #7C6853
+    圆角矩形按 macOS 图标比例（1024 画布，圆角 224）。
+  -->
+  <defs>
+    <!-- 暖白底色：极轻的垂直渐变，避免大面积纯色显得平板 -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFDFA"/>
+      <stop offset="1" stop-color="#F1E9DD"/>
+    </linearGradient>
+    <!-- 波形：琥珀棕的两端渐变，让中心更"有重量" -->
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8E7A63"/>
+      <stop offset="1" stop-color="#6B5843"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 底板 -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+  <!-- 极细内描边：让图标在浅色桌面上也有轮廓 -->
+  <rect x="1" y="1" width="1022" height="1022" rx="223" ry="223"
+        fill="none" stroke="#1D1D1F" stroke-opacity="0.06" stroke-width="2"/>
+
+  <!--
+    五根竖柱：柱宽 64、间距 40，居中于 512。
+    柱高比 0.34 / 0.62 / 0.92 / 0.66 / 0.40（相对 400 的基准高），
+    全部以 y=512 为中线对称 → 视觉重心稳定。
+  -->
+  <g fill="url(#ink)">
+    <rect x="272" y="448" width="64" height="128" rx="32"/>
+    <rect x="376" y="384" width="64" height="256" rx="32"/>
+    <rect x="480" y="312" width="64" height="400" rx="32"/>
+    <rect x="584" y="376" width="64" height="272" rx="32"/>
+    <rect x="688" y="440" width="64" height="144" rx="32"/>
+  </g>
+</svg>

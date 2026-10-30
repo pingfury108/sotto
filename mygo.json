@@ -1,0 +1,16 @@
+{
+  "name": "Sotto",
+  "slug": "sotto",
+  "identifier": "app.sotto.client",
+  "version": "0.1.0",
+  "out": "build",
+  "main": ".",
+  "macos": {
+    "minimumSystemVersion": "13.0",
+    "infoPlist": {
+      "NSBluetoothAlwaysUsageDescription": "Sotto 需要蓝牙连接 AI Passport 语音设备。",
+      "NSBluetoothPeripheralUsageDescription": "Sotto 需要蓝牙连接 AI Passport 语音设备。",
+      "LSApplicationCategoryType": "public.app-category.productivity"
+    }
+  }
+}

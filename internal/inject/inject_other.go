@@ -40,3 +40,6 @@ func (p AXProbe) Verifiable() bool { return false }
 
 // ProbeAX 非 darwin 平台返回零值。
 func ProbeAX() AXProbe { return AXProbe{} }
+
+// BundleID 非 darwin 平台没有 bundle 概念。
+func BundleID() string { return "" }

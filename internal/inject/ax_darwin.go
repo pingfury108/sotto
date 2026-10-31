@@ -111,6 +111,21 @@ func (p AXProbe) Verifiable() bool {
 	return !terminalApps[p.App]
 }
 
+// BundleID 返回当前进程所属 app 的 bundle identifier（未打包运行时为空）。
+//
+// TCC（蓝牙/辅助功能）是按 bundle id + 代码签名记账的，所以排查"授权了却仍报未授权"
+// 时必须先看清自己到底是哪个 bundle：dev 构建（Sotto Dev.app / *.dev）与正式包是两个身份。
+func BundleID() string {
+	if err := loadAX(); err != nil {
+		return ""
+	}
+	main := objc.ID(objc.GetClass("NSBundle")).Send(objc.RegisterName("mainBundle"))
+	if main == 0 {
+		return ""
+	}
+	return nsStringToGo(main.Send(objc.RegisterName("bundleIdentifier")))
+}
+
 // ProbeAX 读取前台 app、聚焦元素角色与字数。永不 panic；失败返回零值。
 func ProbeAX() AXProbe {
 	if err := loadAX(); err != nil {

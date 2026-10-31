@@ -29,6 +29,56 @@ make dev     # = CGO_ENABLED=1 go tool mygo dev
 make build   # = CGO_ENABLED=1 go tool mygo build → build/darwin-amd64/Sotto.app + dmg
 ```
 
+### 权限为什么会"明明授权了还提示未授权"
+
+TCC（蓝牙 / 辅助功能）按 **bundle id + 代码签名** 记账，我们这里有两条同时命中：
+
+| 原因 | 现象 |
+|---|---|
+| `make dev` 产出的是 **`Sotto Dev.app`（`app.sotto.client.dev`）**，正式包是 `Sotto.app`（`app.sotto.client`） | 给其中一个授权，另一个不生效 |
+| **ad-hoc 签名的"指定要求"包含 cdhash**，每次重建都变 | 系统设置里条目还在、开关看着是开的，但新进程 `AXIsProcessTrusted()` 返回 false；蓝牙也会重新弹窗或静默拒绝 |
+
+界面上「设置 → 诊断 → 应用标识」会显示当前进程的 bundle id（启动日志里也有一行），
+先确认你到底在给哪个身份授权。
+
+**立刻恢复**（把该身份的记录全清掉再重新授权，必须重启 app）：
+
+```sh
+tccutil reset All app.sotto.client.dev     # dev 构建；正式包改成 app.sotto.client
+```
+
+为什么重建就会失效，看一眼"指定要求"（DR）就明白：
+
+```sh
+codesign -d -r- build/darwin-amd64/Sotto.app
+# designated => cdhash H"fcf0212af1d367a7d18d26aa73b6cf4c0686759c"
+#                ↑ ad-hoc 的 DR 就是二进制哈希，重编必变
+```
+
+bundle id 本身没变（一直是 `app.sotto.client`），变的是签名身份。
+
+**根治**（授权跨重建保留）：把签名身份当仓库资产管理，构建时用项目内临时钥匙串。
+
+```sh
+make dev      # 自动完成：导入 scripts/signing/sotto-dev.p12 → 签 .signing/build.keychain-db → codesign
+make build
+```
+
+| 文件 | 作用 |
+|---|---|
+| `scripts/signing/sotto-dev.cert.pem` / `.key.pem` / `.p12` | 证书与私钥，**提交进仓库**（自签名、10 年有效） |
+| `.signing/build.keychain-db` | 构建期临时钥匙串（gitignore），由 p12 自动生成，不碰登录钥匙串 |
+| `scripts/ensure-sign.sh` | 每次构建前幂等准备：建钥匙串 / 解锁 / 加进 keychain 搜索列表 |
+
+签出来的「指定要求」变成 `identifier "app.sotto.client" and certificate leaf = H"…"`，
+**重编不再变化，蓝牙/辅助功能授权一次就够**。自签名证书不会被 `find-identity -v`
+列为"valid identity"，但 `codesign` 能正常使用（这是预期行为）。
+
+想换证书：`./scripts/signing-cert.sh`，然后把 `scripts/signing/` 的新文件提交。
+
+> ⚠️ 私钥进仓库 = 公开。这个身份只能用于本机/私人构建：拿到它的人签出的程序在
+> 你的机器上会继承 `app.sotto.client` 的 TCC 授权。公开仓库请自行权衡。
+
 打包产物是 **ad-hoc 签名**（本机没有 Developer ID）：
 - 本机运行没问题（不是从网络下载，没有 quarantine 标记）
 - 公证（notarize）做不了，`make build` 会跳过并提示

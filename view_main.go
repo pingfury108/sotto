@@ -253,7 +253,7 @@ func (a *app) fieldsVolcano(c *ui.Context) {
 	idx := resourceIndex(a.resource)
 
 	ui.Row(c).FillWidth().Gap(sp2).AlignItems(ui.Center).Children(func() {
-		if ui.TextInput(c, &a.apiKey).Placeholder("粘贴火山 API Key").Password().Grow(1).Changed() {
+		if ui.TextInput(c, &a.apiKey).Placeholder("粘贴火山 API Key").Label("API Key").Password().Grow(1).Changed() {
 			a.saveConfig()
 		}
 		cfg := a.formASR()
@@ -279,7 +279,7 @@ func (a *app) fieldsAirvoice(c *ui.Context) {
 	testing, _, _ := a.asrSnapshot()
 
 	ui.Row(c).FillWidth().Gap(sp2).AlignItems(ui.Center).Children(func() {
-		if ui.TextInput(c, &a.avURL).Placeholder("192.168.32.145:8787").Grow(1).Changed() {
+		if ui.TextInput(c, &a.avURL).Placeholder("例如 192.168.1.5:8787").Label("局域网地址").Grow(1).Changed() {
 			a.saveConfig()
 		}
 		url, token := a.avURL, a.avToken
@@ -289,7 +289,7 @@ func (a *app) fieldsAirvoice(c *ui.Context) {
 		}
 	})
 	field(c, "Token", func() {
-		if ui.TextInput(c, &a.avToken).Placeholder("留空 = 手机端未开鉴权").Password().Changed() {
+		if ui.TextInput(c, &a.avToken).Placeholder("留空 = 手机端未开鉴权").Label("局域网 Token").Password().Changed() {
 			a.saveConfig()
 		}
 	})
@@ -419,13 +419,13 @@ func (a *app) viewSettings(c *ui.Context) {
 					ui.Column(c).FillWidth().Gap(sp3).Children(func() {
 						sectionTitle(c, "云端识别调优")
 						field(c, "热词", func() {
-							if ui.TextInput(c, &a.hotwords).Placeholder("伏羲, sotto, deploy.sh").Changed() {
+							if ui.TextInput(c, &a.hotwords).Placeholder("伏羲, sotto, deploy.sh").Label("热词").Changed() {
 								a.saveConfig()
 							}
 						})
 						hint(c, "逗号分隔。用于人名、项目名、命令这类容易听错的词；词太多会互相干扰，建议 10 个以内。")
 						field(c, "上下文", func() {
-							if ui.TextInput(c, &a.contexts).Placeholder("上一句对话，可留空").Changed() {
+							if ui.TextInput(c, &a.contexts).Placeholder("上一句对话，可留空").Label("上下文").Changed() {
 								a.saveConfig()
 							}
 						})

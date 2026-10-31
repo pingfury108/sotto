@@ -31,7 +31,14 @@ func (a *app) newFloatingWindow() *mygo.Window {
 		Content:           ui.View(a.viewFloating),
 	})
 	// 关窗只收起：面板没有关闭语义，误按 Cmd+W 不该把功能弄丢。
+	//
+	// 但退出时必须放行：mygo 的退出流程会关掉所有窗口（含悬浮窗），任何
+	// 一个窗口 PreventDefault 都会让整次退出被取消——主窗已被销毁、悬浮窗
+	// 又被拦住，app 就卡在"没有主窗、也退不出去"的状态。
 	w.OnClose(func(e *mygo.CloseEvent) {
+		if a.quitting.Load() {
+			return
+		}
 		e.PreventDefault()
 		w.Hide()
 	})

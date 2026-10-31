@@ -65,15 +65,18 @@ type app struct {
 	page       string
 
 	// —— 运行状态（受 mu）——
-	mu         sync.Mutex
-	connState  string
-	connDetail string
-	asrTesting bool
-	asrOK      bool
-	asrResult  string
-	floatText  string
-	floatHint  string
-	quitting   bool
+	mu            sync.Mutex
+	connState     string
+	connDetail    string
+	asrTesting    bool
+	asrOK         bool
+	asrResult     string
+	floatText     string
+	floatHint     string
+	quitting      atomic.Bool // 正在退出：窗口的 OnClose 据此放行
+	quitConfirmed atomic.Bool // OnWillQuit 已确认（退出不会被取消）
+
+	trayKey string // 上次托盘菜单对应的状态，未变化就不重建菜单
 
 	bleCached ble.Client       // 复用同一个 CoreBluetooth 管理器（每次新建会泄漏）
 	sess      *session.Manager // 连接级会话管理者（断连时置空）
@@ -111,9 +114,12 @@ type app struct {
 	repaintPending bool
 }
 
-func newApp() *app {
+func newApp() *app { return newAppAt(config.Dir()) }
+
+// newAppAt 与 newApp 相同，但配置目录由调用方给出（测试用临时目录）。
+func newAppAt(dir string) *app {
 	a := &app{
-		cfg:       config.Load(config.Dir()),
+		cfg:       config.Load(dir),
 		connState: stateIdle,
 		events:    make(chan []byte, 64),
 		page:      "main",
@@ -127,6 +133,16 @@ func newApp() *app {
 
 func (a *app) applyConfig(c config.Config) {
 	a.showFloatFlag.Store(c.ShowFloating)
+
+	// 后端与局域网参数：这两个以前漏读了，导致"改了没记住"，更糟的是重启后
+	// 表单是空的，紧接着任意一次保存都会把磁盘上正确的值覆盖成空串。
+	if c.ASRBackend == config.BackendAirvoice {
+		a.backend = backendAirvoice
+	} else {
+		a.backend = backendVolcano
+	}
+	a.backendFlag.Store(int32(a.backend))
+	a.avURL, a.avToken = c.AirvoiceURL, c.AirvoiceToken
 	a.apiKey, a.wsURL = c.VolcanoAPIKey, c.VolcanoWSURL
 	a.resource, a.model = c.VolcanoResourceID, c.VolcanoModel
 	a.nonstream = c.VolcanoNonstream
@@ -936,6 +952,7 @@ func (a *app) diag() [][2]string {
 		asrState = "失败"
 	}
 	return [][2]string{
+		{"应用标识", bundleIDForDisplay()},
 		{"配置目录", config.Dir()},
 		{"配置文件", a.cfg.Path()},
 		{"设备连接", state + " " + detail},
@@ -944,6 +961,14 @@ func (a *app) diag() [][2]string {
 		{"ASR", asrState},
 		{"BLE 实现", "cbgo（CoreBluetooth）"},
 	}
+}
+
+// bundleIDForDisplay 返回当前 app 的 bundle id（未打包时给出提示）。
+func bundleIDForDisplay() string {
+	if id := inject.BundleID(); id != "" {
+		return id
+	}
+	return "（未打包运行，权限记在宿主程序上）"
 }
 
 func boolLabel(v bool, yes, no string) string {

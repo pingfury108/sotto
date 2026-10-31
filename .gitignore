@@ -4,3 +4,5 @@
 *.wav
 *.log
 .DS_Store
+# 构建期临时钥匙串（证书本身在 scripts/signing/，是仓库资产）
+/.signing/

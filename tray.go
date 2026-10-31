@@ -33,6 +33,16 @@ func (a *app) refreshTray() {
 	state, _ := a.connSnapshot()
 	a.tray.SetToolTip("sotto · " + statusLabel(state))
 
+	// macOS 上 NSMenu 若在展开期间被替换，点击回调会丢（菜单项指向已释放对象）。
+	// 我们的 refresh 由日志驱动，可能每几十毫秒一次，所以状态没变就不重建菜单。
+	a.mu.Lock()
+	same := a.trayKey == state
+	a.trayKey = state
+	a.mu.Unlock()
+	if same {
+		return
+	}
+
 	connected := state == stateConnected || state == stateConnecting
 	connItem := &mygo.MenuItem{Label: "连接设备", Click: func(*mygo.MenuItem, *mygo.Window) {
 		a.connectDevice()

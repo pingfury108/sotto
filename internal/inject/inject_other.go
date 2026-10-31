@@ -26,3 +26,17 @@ func Key(string) error { return ErrNoTrust }
 
 // Paste 注入文本（非 macOS 不支持）。
 func Paste(string, string) (string, error) { return "", ErrNoTrust }
+
+// AXProbe 是非 darwin 平台的占位：没有辅助功能 API，永远"无法校验"。
+type AXProbe struct {
+	App      string
+	Role     string
+	Chars    int
+	HasChars bool
+}
+
+// Verifiable 在非 darwin 平台恒为 false。
+func (p AXProbe) Verifiable() bool { return false }
+
+// ProbeAX 非 darwin 平台返回零值。
+func ProbeAX() AXProbe { return AXProbe{} }

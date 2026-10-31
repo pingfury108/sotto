@@ -1,0 +1,113 @@
+name: build
+
+# macOS 侧必须开 cgo（BLE 走 cbgo → CoreBluetooth），cgo 又不能可靠交叉编译，
+# 所以 amd64 / arm64 各用一个**原生架构的 runner** 构建，最后各出一份 dmg。
+# Windows 侧 BLE 走 tinygo.org/x/bluetooth 的 WinRT 后端（纯 syscall），不需要 cgo。
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # 打 tag 时创建 Release
+
+jobs:
+  test:
+    name: test (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./internal/...
+
+  macos:
+    name: macOS ${{ matrix.arch }} (cgo)
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13 # Intel → amd64
+            arch: amd64
+          - runner: macos-14 # Apple Silicon → arm64
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: mygo build（dmg）
+        # 本机/CI 都没有 Developer ID：ad-hoc 签名，跳过公证。
+        run: go tool mygo build -platform darwin/${{ matrix.arch }} -skip-notarize
+
+      - name: 列出产物
+        run: ls -lh "build/darwin-${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sotto-darwin-${{ matrix.arch }}
+          path: build/darwin-${{ matrix.arch }}/*.dmg
+          if-no-files-found: error
+
+  windows:
+    name: Windows amd64
+    needs: test
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 安装 NSIS（生成安装包用）
+        run: |
+          choco install nsis --no-progress -y
+          "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: mygo build（exe + 安装包）
+        run: go tool mygo build -platform windows/amd64
+
+      - name: 列出产物
+        run: Get-ChildItem build/windows-amd64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sotto-windows-amd64
+          path: |
+            build/windows-amd64/*.exe
+          if-no-files-found: error
+
+  release:
+    name: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: 汇总产物
+        run: find artifacts -type f | sort
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

@@ -1,4 +1,4 @@
-//go:build blelib
+//go:build windows || blelib
 
 package ble
 

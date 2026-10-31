@@ -18,7 +18,9 @@ AI Passport 的 macOS 桌面客户端（MyGo 原生 UI）。
 | M3 UI：主窗 / 设置 / 托盘 / 悬浮窗 / 诊断 | ✅ 本次落地 |
 | M2 闭环：说话 → 悬浮窗 → 定稿注入 → 设备 DONE | ✅ 真机通过（`internal/session`，有单测） |
 | 可靠性：自动重连、每小时校时、注入落地校验 | ✅ 本次落地 |
-| M4 审批页、首启向导 | ⏳ 未做 |
+| 识别调优：热词 / 对话上下文 / 静音判停 / 语义顺滑 | ✅ 本次落地 |
+| 审批（设备端物理确认） | ⛔ 不做（用户明确不需要；协议层保留，随时可接） |
+| 首启向导 | ⏳ 未做（单页表单 + 测试按钮已等价可用） |
 
 ## 跑应用
 
@@ -46,13 +48,34 @@ make build   # = CGO_ENABLED=1 go tool mygo build → build/darwin-amd64/Sotto.a
   改端点与模型、"测试连接"零音频握手验证 Key。
 - **输入注入**：自动 / 键盘事件 / 剪贴板；改测试文本后点"试注入"直接把字打进当前
   焦点输入框，"检查授权"报告辅助功能权限。
-- **候选字悬浮窗**：开关 + 预览（底部居中、不抢焦点）。
+- **识别调优**（设置页）：热词（人名/项目名/命令）、对话上下文（`dialog_ctx`，
+  按 user/bot 交替）、静音判停 `end_window_size`（快 0.5s / 默认 0.8s / 耐等 1.5s）、
+  语义顺滑 `enable_ddc`（删停顿词）；都随首帧下发，改完下一次说话即生效。
+- **候选字悬浮窗**：开关 + 预览（底部居中、不抢焦点；高度按文本实测向上生长）。
+- **断线自动重连**：1s→2s→4s…（上限 30s）退避，手动断开即停。
+- **每小时校时**：连接后每小时一次 `time.set`。
 - **日志 / 诊断**：最近日志、一键复制、诊断页（配置路径、授权状态、连接状态）。
 - **设备按键**：长按时设备发来的 `key.action` 已经接通 —— 回车/清空真的会注入。
 - **托盘**：连接状态、连接/断开、预览悬浮窗、测试注入、打开主窗、退出。
 
 设置存在 `~/Library/Application Support/sotto/config.json`（sotto 自己的目录，
 不碰官方客户端的 `AI Passport` 目录）。
+
+## 跨平台与 CI
+
+| 平台 | BLE 实现 | cgo | 产物 |
+|---|---|---|---|
+| macOS Intel (amd64) | cbgo → CoreBluetooth | **需要** (`CGO_ENABLED=1`) | `sotto-<ver>-amd64.dmg` |
+| macOS Apple Silicon (arm64) | 同上 | **需要** | `sotto-<ver>-arm64.dmg` |
+| Windows (amd64) | `tinygo.org/x/bluetooth` → WinRT（纯 syscall，**未真机验证**） | 不需要 | `Sotto.exe` + `sotto-<ver>-setup-amd64.exe` |
+| Linux | 无（编译通过，运行时提示不支持 BLE） | 不需要 | — |
+
+CI 见 `.github/workflows/build.yml`：
+
+- cgo 不能可靠交叉编译，所以 **amd64 用 `macos-13`（Intel）、arm64 用 `macos-14`（Apple Silicon）各建各的**
+- 两份 dmg 分别覆盖 Intel 与 M 系列（M 上也能用 amd64 走 Rosetta）
+- 打 `v*` tag 会自动建 Release 并附上三种产物
+- 没有 Developer ID，构建走 ad-hoc 签名 + `-skip-notarize`
 
 ## 手工验注入（不需要设备）
 
@@ -72,6 +95,7 @@ VOLCANO_API_KEY=xxx go run ./cmd/asrcheck      # 默认 2.0 小时版
 make asr                                       # 等价
 go run ./cmd/asrcheck -resource volc.seedasr.sauc.concurrent   # 2.0 并发版
 go run ./cmd/asrcheck -resource volc.bigasr.sauc.duration      # 1.0 小时版（历史）
+go run ./cmd/asrcheck -hotwords "伏羲,sotto" -end-window 1200 -ddc   # 带上识别调优参数
 ```
 
 零音频握手（建 WS → 发首帧 → 等第一帧），不消耗识别时长。界面里「语音识别 → 测试」

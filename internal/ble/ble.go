@@ -49,6 +49,8 @@ var (
 	ErrNotConnected = errors.New("ble: 未连接")
 	ErrNoService    = errors.New("ble: 未发现服务 0xA2B0")
 	ErrNoChar       = errors.New("ble: 缺失必需特征（CTRL/EVENT/AUDIO）")
+	// ErrUnsupported 当前平台没有 BLE 实现（只有 macOS 与 Windows 有）。
+	ErrUnsupported = errors.New("ble: 当前平台暂不支持 BLE（仅 macOS / Windows）")
 )
 
 // Handler 收设备侧数据。回调发生在 CoreBluetooth 的队列线程上：
@@ -108,14 +110,18 @@ type Client interface {
 // CBCentralManager。
 var newLibImpl func(Handler) Client
 
-// New 按实现名创建客户端："cb"（默认）或 "lib"（需 -tags blelib）。
+// New 按实现名创建客户端。
+//
+//	"cb"（默认）按平台选：macOS 用 cbgo（CoreBluetooth），Windows 用
+//	    tinygo.org/x/bluetooth（WinRT），其它平台返回不支持。
+//	"lib"       显式要求 tinygo.org/x/bluetooth；macOS 上需要 -tags blelib。
 func New(h Handler, impl string) (Client, error) {
 	switch impl {
 	case "", "cb":
-		return newCB(h), nil
+		return newPlatform(h), nil
 	case "lib":
 		if newLibImpl == nil {
-			return nil, errors.New("ble: lib 实现未编译进来（加 -tags blelib）")
+			return nil, errors.New("ble: lib 实现未编译进来（macOS 上加 -tags blelib；Windows 默认就是它）")
 		}
 		return newLibImpl(h), nil
 	}

@@ -72,7 +72,8 @@ make build   # = CGO_ENABLED=1 go tool mygo build → build/darwin-amd64/Sotto.a
 
 CI 见 `.github/workflows/build.yml`：
 
-- cgo 不能可靠交叉编译，所以 **amd64 用 `macos-13`（Intel）、arm64 用 `macos-14`（Apple Silicon）各建各的**
+- cgo 不能可靠交叉编译，所以 **amd64 用 `macos-15-intel`（Intel）、arm64 用 `macos-15`（Apple Silicon）各建各的**
+  （`macos-13` 已退役，用它会永远排队）
 - 两份 dmg 分别覆盖 Intel 与 M 系列（M 上也能用 amd64 走 Rosetta）
 - 打 `v*` tag 会自动建 Release 并附上三种产物
 - 没有 Developer ID，构建走 ad-hoc 签名 + `-skip-notarize`

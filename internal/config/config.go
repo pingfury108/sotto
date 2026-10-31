@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"sotto/internal/asr"
@@ -31,6 +32,12 @@ type Config struct {
 	VolcanoModel      string `json:"volcanoModel"`
 	VolcanoNonstream  bool   `json:"volcanoEnableNonstream"`
 
+	// 识别调优：热词 / 对话上下文 / 静音判停阈值（ms）/ 语义顺滑。
+	VolcanoHotwords  string `json:"volcanoHotwords"`    // 逗号、顿号等分隔
+	VolcanoContexts  string `json:"volcanoContexts"`    // 竖线或换行分隔
+	VolcanoEndWindow int    `json:"volcanoEndWindowMs"` // 0 用服务端默认
+	VolcanoDDC       bool   `json:"volcanoEnableDDC"`
+
 	InjectMode   string `json:"injectMode"`
 	InjectSample string `json:"injectSample"`
 
@@ -46,6 +53,7 @@ func Default() Config {
 		VolcanoResourceID: asr.DefaultResourceID,
 		VolcanoModel:      asr.DefaultModel,
 		VolcanoNonstream:  true,
+		VolcanoEndWindow:  800, // 服务端默认值，显式写出来让界面能显示"默认"
 		InjectMode:        InjectAuto,
 		InjectSample:      "你好，这是 sotto 的注入测试。",
 		ShowFloating:      true,
@@ -60,7 +68,33 @@ func (c Config) ASR() asr.Config {
 		ResourceID:      c.VolcanoResourceID,
 		Model:           c.VolcanoModel,
 		EnableNonStream: c.VolcanoNonstream,
+		Hotwords:        SplitList(c.VolcanoHotwords),
+		Contexts:        SplitList(c.VolcanoContexts),
+		EndWindowSize:   c.VolcanoEndWindow,
+		EnableDDC:       c.VolcanoDDC,
 	}
+}
+
+// SplitList 把用户输入的列表文本拆成条目：逗号、顿号、分号以及竖线/换行都算分隔符。
+// 汉字的全角标点一并处理，免得用户切输入法后被当成一个词。
+func SplitList(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	fields := strings.FieldsFunc(s, func(r rune) bool {
+		switch r {
+		case ',', '，', '、', ';', '；', '|', '｜', '\n', '\r':
+			return true
+		}
+		return false
+	})
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // Dir 返回 sotto 的数据目录（不存在时创建）。

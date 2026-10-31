@@ -91,7 +91,24 @@ type Config struct {
 	ResourceID      string
 	Model           string
 	EnableNonStream bool
+
+	// Hotwords 热词：提升人名、项目名、命令、专业术语的识别率。
+	Hotwords []string
+	// Contexts 对话上下文，按 user/bot 交替标注（对应文档的 dialog_ctx）。
+	Contexts []string
+	// EndWindowSize 静音判停阈值（ms）：连续静音达到该值即判定一句话结束，
+	// 并触发二遍识别重写该句。0 表示用服务端默认（800），有效范围 300–5000。
+	EndWindowSize int
+	// EnableDDC 语义顺滑：删掉停顿词、语气词、语义重复词。
+	EnableDDC bool
 }
+
+// context 相关常量（见文档"热词与上下文"）。
+const (
+	contextTypeDialog = "dialog_ctx"
+	minEndWindow      = 300
+	maxEndWindow      = 5000
+)
 
 // WithDefaults 补齐缺省值。
 func (c Config) WithDefaults() Config {
@@ -159,6 +176,16 @@ func fullRequest(cfg Config) []byte {
 	if cfg.EnableNonStream {
 		req["enable_nonstream"] = true
 	}
+	// context 必须是"JSON 字符串"而不是嵌套对象——文档明确要求序列化后传入。
+	if ctx := contextJSON(cfg); ctx != "" {
+		req["context"] = ctx
+	}
+	if n := clampEndWindow(cfg.EndWindowSize); n > 0 {
+		req["end_window_size"] = n
+	}
+	if cfg.EnableDDC {
+		req["enable_ddc"] = true
+	}
 
 	body := map[string]any{
 		"user":    map[string]any{"uid": "sotto"},
@@ -170,6 +197,66 @@ func fullRequest(cfg Config) []byte {
 		return nil
 	}
 	return raw
+}
+
+// contextJSON 构造 request.context：热词 + 对话上下文。
+// 空内容返回 ""（不发这个字段，省得给服务端塞空对象）。
+func contextJSON(cfg Config) string {
+	hotwords := make([]map[string]string, 0, len(cfg.Hotwords))
+	seen := make(map[string]bool, len(cfg.Hotwords))
+	for _, w := range cfg.Hotwords {
+		w = strings.TrimSpace(w)
+		if w == "" || seen[w] {
+			continue
+		}
+		seen[w] = true
+		hotwords = append(hotwords, map[string]string{"word": w})
+	}
+
+	ctxData := make([]map[string]string, 0, len(cfg.Contexts))
+	speaker := 0
+	for _, line := range cfg.Contexts {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		who := "user"
+		if speaker%2 == 1 {
+			who = "bot"
+		}
+		speaker++
+		ctxData = append(ctxData, map[string]string{"speaker": who, "text": line})
+	}
+
+	if len(hotwords) == 0 && len(ctxData) == 0 {
+		return ""
+	}
+	body := make(map[string]any, 3)
+	if len(hotwords) > 0 {
+		body["hotwords"] = hotwords
+	}
+	if len(ctxData) > 0 {
+		body["context_type"] = contextTypeDialog
+		body["context_data"] = ctxData
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+// clampEndWindow 把静音判停阈值夹到服务端接受的区间；0 表示用默认值。
+func clampEndWindow(ms int) int {
+	switch {
+	case ms <= 0:
+		return 0
+	case ms < minEndWindow:
+		return minEndWindow
+	case ms > maxEndWindow:
+		return maxEndWindow
+	}
+	return ms
 }
 
 // FullRequestFrame 返回首帧字节（JSON + gzip）。

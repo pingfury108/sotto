@@ -381,6 +381,39 @@ func (a *app) viewSettings(c *ui.Context) {
 
 				card(c, func() {
 					ui.Column(c).FillWidth().Gap(sp3).Children(func() {
+						sectionTitle(c, "识别调优")
+						field(c, "热词", func() {
+							if ui.TextInput(c, &a.hotwords).Placeholder("伏羲, sotto, deploy.sh").Changed() {
+								a.saveConfig()
+							}
+						})
+						hint(c, "逗号分隔。用于人名、项目名、命令这类容易听错的词；词太多会互相干扰，建议 10 个以内。")
+						field(c, "上下文", func() {
+							if ui.TextInput(c, &a.contexts).Placeholder("上一句对话，可留空").Changed() {
+								a.saveConfig()
+							}
+						})
+						hint(c, "竖线分隔多条，按 user / bot 交替作为对话历史，帮助模型对齐专有名词。")
+						ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
+							ui.Text(c, "静音判停").FontSize(fsBody).TextColor(c.Theme().TextMuted).Width(76).Shrink(0)
+							idx := endWindowIndex(a.endWindow)
+							if ui.Segmented(c, &idx, "快 0.5s", "默认 0.8s", "耐等 1.5s").Changed() {
+								a.endWindow = endWindowPresets[idx]
+								a.saveConfig()
+							}
+							ui.Box(c).Grow(1)
+						})
+						hint(c, "连续静音达到该时长就判定一句话说完，并触发二遍识别重写这句。")
+						settingRow(c, "语义顺滑", "enable_ddc：删掉停顿词、语气词、语义重复词", func() {
+							if ui.Switch(c, &a.ddc).Changed() {
+								a.saveConfig()
+							}
+						})
+					})
+				})
+
+				card(c, func() {
+					ui.Column(c).FillWidth().Gap(sp3).Children(func() {
 						sectionTitle(c, "调试")
 						field(c, "测试文本", func() {
 							if ui.TextInput(c, &a.injectText).Placeholder("要注入的文字").Changed() {

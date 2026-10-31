@@ -26,6 +26,10 @@ func main() {
 		model    string
 		timeout  time.Duration
 		nonstrm  bool
+		hotwords string
+		contexts string
+		endWin   int
+		ddc      bool
 	)
 	flag.StringVar(&key, "key", key, "火山 API Key（缺省读环境变量 VOLCANO_API_KEY）")
 	flag.StringVar(&url, "url", asr.DefaultWSURL, "WebSocket 端点")
@@ -35,6 +39,10 @@ func main() {
 	flag.StringVar(&model, "model", asr.DefaultModel, "模型名（文档规定目前仅支持 bigmodel）")
 	flag.BoolVar(&nonstrm, "nonstream", true, "enable_nonstream（二遍识别，配 bigmodel_async）")
 	flag.DurationVar(&timeout, "timeout", 20*time.Second, "总超时")
+	flag.StringVar(&hotwords, "hotwords", "", "热词（逗号分隔），例如 \"伏羲,sotto\"")
+	flag.StringVar(&contexts, "contexts", "", "对话上下文（竖线分隔，按 user/bot 交替）")
+	flag.IntVar(&endWin, "end-window", 800, "静音判停阈值 ms（300–5000）")
+	flag.BoolVar(&ddc, "ddc", false, "enable_ddc 语义顺滑")
 	flag.Parse()
 
 	if strings.TrimSpace(key) == "" {
@@ -48,9 +56,20 @@ func main() {
 		ResourceID:      resource,
 		Model:           model,
 		EnableNonStream: nonstrm,
+		Hotwords:        splitList(hotwords),
+		Contexts:        splitList(contexts),
+		EndWindowSize:   endWin,
+		EnableDDC:       ddc,
 	}
 	fmt.Printf("端点    %s\n资源    %s\n模型    %s（nonstream=%v）\n",
 		url, resource, model, nonstrm)
+	if len(cfg.Hotwords) > 0 {
+		fmt.Printf("热词    %v\n", cfg.Hotwords)
+	}
+	if len(cfg.Contexts) > 0 {
+		fmt.Printf("上下文  %v\n", cfg.Contexts)
+	}
+	fmt.Printf("判停    %d ms（ddc=%v）\n", endWin, ddc)
 	fmt.Print("握手…")
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -69,4 +88,25 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf(" 成功（%d ms）\n", elapsed.Milliseconds())
+}
+
+// splitList 与 config.SplitList 同规则（这里不 import config，避免 CLI 依赖应用层）。
+func splitList(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	fields := strings.FieldsFunc(s, func(r rune) bool {
+		switch r {
+		case ',', '，', '、', ';', '；', '|', '｜', '\n', '\r':
+			return true
+		}
+		return false
+	})
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }

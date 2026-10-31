@@ -43,6 +43,10 @@ type app struct {
 	resource   string
 	model      string
 	nonstream  bool
+	hotwords   string
+	contexts   string
+	endWindow  int
+	ddc        bool
 	deviceName string
 	autoConn   bool
 	injectMode int // 0 auto / 1 unicode / 2 clipboard
@@ -112,6 +116,11 @@ func (a *app) applyConfig(c config.Config) {
 	a.apiKey, a.wsURL = c.VolcanoAPIKey, c.VolcanoWSURL
 	a.resource, a.model = c.VolcanoResourceID, c.VolcanoModel
 	a.nonstream = c.VolcanoNonstream
+	a.hotwords, a.contexts = c.VolcanoHotwords, c.VolcanoContexts
+	a.endWindow, a.ddc = c.VolcanoEndWindow, c.VolcanoDDC
+	if a.endWindow <= 0 {
+		a.endWindow = endWindowPresets[1]
+	}
 	a.deviceName, a.autoConn = c.DeviceName, c.AutoConnect
 	a.injectText = c.InjectSample
 	a.showFloat = c.ShowFloating
@@ -137,6 +146,10 @@ func (a *app) saveConfig() {
 		c.VolcanoResourceID = a.resource
 		c.VolcanoModel = a.model
 		c.VolcanoNonstream = a.nonstream
+		c.VolcanoHotwords = a.hotwords
+		c.VolcanoContexts = a.contexts
+		c.VolcanoEndWindow = a.endWindow
+		c.VolcanoDDC = a.ddc
 		c.DeviceName = a.deviceName
 		c.AutoConnect = a.autoConn
 		c.InjectMode = modes[a.injectMode]
@@ -192,7 +205,24 @@ func (a *app) formASRNoLock() asr.Config {
 		ResourceID:      a.resource,
 		Model:           a.model,
 		EnableNonStream: a.nonstream,
+		Hotwords:        config.SplitList(a.hotwords),
+		Contexts:        config.SplitList(a.contexts),
+		EndWindowSize:   a.endWindow,
+		EnableDDC:       a.ddc,
 	}
+}
+
+// endWindowPresets 是静音判停的预设（ms）：快 / 默认 / 耐等。
+var endWindowPresets = []int{500, 800, 1500}
+
+// endWindowIndex 由当前值反推预设下标（未知值落到"默认"）。
+func endWindowIndex(ms int) int {
+	for i, v := range endWindowPresets {
+		if v == ms {
+			return i
+		}
+	}
+	return 1
 }
 
 // formASR 用当前表单值构造 ASR 参数（主线程调用）。
@@ -203,6 +233,10 @@ func (a *app) formASR() asr.Config {
 		ResourceID:      a.resource,
 		Model:           a.model,
 		EnableNonStream: a.nonstream,
+		Hotwords:        config.SplitList(a.hotwords),
+		Contexts:        config.SplitList(a.contexts),
+		EndWindowSize:   a.endWindow,
+		EnableDDC:       a.ddc,
 	}
 }
 

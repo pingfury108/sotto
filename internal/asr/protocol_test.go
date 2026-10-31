@@ -154,3 +154,86 @@ func TestParseServerGarbage(t *testing.T) {
 		t.Fatalf("越界长度应判为 unknown: %+v", f)
 	}
 }
+
+// 热词/上下文：文档要求 context 是"序列化成 JSON 字符串"，不能是嵌套对象。
+func TestFullRequestContextAndTuning(t *testing.T) {
+	frame := FullRequestFrame(Config{
+		APIKey:        "k",
+		Hotwords:      []string{"伏羲", " sotto ", "伏羲", ""}, // 去空白 + 去重
+		Contexts:      []string{"帮我查一下天气", "", "今天北京晴"},    // 空行跳过，speaker 交替
+		EndWindowSize: 1200,
+		EnableDDC:     true,
+	})
+	body := requestBody(t, frame)
+	req, _ := body["request"].(map[string]any)
+
+	raw, ok := req["context"].(string)
+	if !ok {
+		t.Fatalf("context 必须是字符串，得到 %T", req["context"])
+	}
+	var ctx struct {
+		Hotwords []struct {
+			Word string `json:"word"`
+		} `json:"hotwords"`
+		ContextType string `json:"context_type"`
+		ContextData []struct {
+			Speaker string `json:"speaker"`
+			Text    string `json:"text"`
+		} `json:"context_data"`
+	}
+	if err := json.Unmarshal([]byte(raw), &ctx); err != nil {
+		t.Fatalf("context 不是合法 JSON: %v（%s）", err, raw)
+	}
+	if len(ctx.Hotwords) != 2 || ctx.Hotwords[0].Word != "伏羲" || ctx.Hotwords[1].Word != "sotto" {
+		t.Fatalf("热词不对: %+v", ctx.Hotwords)
+	}
+	if ctx.ContextType != contextTypeDialog {
+		t.Fatalf("context_type = %q", ctx.ContextType)
+	}
+	if len(ctx.ContextData) != 2 ||
+		ctx.ContextData[0].Speaker != "user" || ctx.ContextData[1].Speaker != "bot" {
+		t.Fatalf("上下文 speaker 交替不对: %+v", ctx.ContextData)
+	}
+	if n, _ := req["end_window_size"].(float64); int(n) != 1200 {
+		t.Fatalf("end_window_size = %v，want 1200", req["end_window_size"])
+	}
+	if req["enable_ddc"] != true {
+		t.Fatalf("enable_ddc 未下发: %v", req["enable_ddc"])
+	}
+}
+
+// 没配热词/上下文时不该下发空 context；静音判停越界要夹紧；0 表示用默认不下发。
+func TestFullRequestOmitsEmptyTuning(t *testing.T) {
+	body := requestBody(t, FullRequestFrame(Config{APIKey: "k"}))
+	req, _ := body["request"].(map[string]any)
+	for _, k := range []string{"context", "end_window_size", "enable_ddc"} {
+		if _, ok := req[k]; ok {
+			t.Fatalf("默认配置不应下发 %s", k)
+		}
+	}
+	if got := clampEndWindow(100); got != minEndWindow {
+		t.Fatalf("低于下限应夹到 %d，得到 %d", minEndWindow, got)
+	}
+	if got := clampEndWindow(9000); got != maxEndWindow {
+		t.Fatalf("高于上限应夹到 %d，得到 %d", maxEndWindow, got)
+	}
+}
+
+// requestBody 解开首帧的 gzip JSON。
+func requestBody(t *testing.T, frame []byte) map[string]any {
+	t.Helper()
+	size := binary.BigEndian.Uint32(frame[4:8])
+	zr, err := gzip.NewReader(bytes.NewReader(frame[8 : 8+size]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	return body
+}

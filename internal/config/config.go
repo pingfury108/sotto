@@ -14,6 +14,12 @@ import (
 	"sotto/internal/asr"
 )
 
+// 识别后端。
+const (
+	BackendVolcano  = "volcano"  // 火山云端流式（有候选字）
+	BackendAirvoice = "airvoice" // 空音局域网整段识别（零出站、无候选字）
+)
+
 // 注入方式。
 const (
 	InjectAuto      = "auto"      // 先键盘事件，失败回退剪贴板
@@ -31,6 +37,11 @@ type Config struct {
 	VolcanoResourceID string `json:"volcanoResourceId"`
 	VolcanoModel      string `json:"volcanoModel"`
 	VolcanoNonstream  bool   `json:"volcanoEnableNonstream"`
+
+	// 识别后端与局域网（空音）参数。
+	ASRBackend    string `json:"asrBackend"`    // volcano | airvoice
+	AirvoiceURL   string `json:"airvoiceUrl"`   // host:port，如 192.168.32.145:8787
+	AirvoiceToken string `json:"airvoiceToken"` // 留空 = 服务端未开鉴权
 
 	// 识别调优：热词 / 对话上下文 / 静音判停阈值（ms）/ 语义顺滑。
 	VolcanoHotwords  string `json:"volcanoHotwords"`    // 逗号、顿号等分隔
@@ -54,6 +65,7 @@ func Default() Config {
 		VolcanoModel:      asr.DefaultModel,
 		VolcanoNonstream:  true,
 		VolcanoEndWindow:  800, // 服务端默认值，显式写出来让界面能显示"默认"
+		ASRBackend:        BackendVolcano,
 		InjectMode:        InjectAuto,
 		InjectSample:      "你好，这是 sotto 的注入测试。",
 		ShowFloating:      true,

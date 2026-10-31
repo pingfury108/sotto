@@ -163,7 +163,7 @@ func newHarness(t *testing.T, cfg Config, connectErr error) *harness {
 			h.mu.Unlock()
 		},
 	})
-	h.mgr.newASR = func(asr.Config) asrClient { return h.fake }
+	h.mgr.newASR = func(asr.Config) Engine { return h.fake }
 	return h
 }
 
@@ -393,4 +393,26 @@ func TestDuplicateVoiceStart(t *testing.T) {
 
 func containsDone(line []byte) bool {
 	return strings.Contains(string(line), `"agent.status"`) && strings.Contains(string(line), `"done"`)
+}
+
+// 空文本定稿（静音/没听清）也要立刻收尾，不该等到 WaitFinal 超时。
+func TestEmptyFinalEndsPromptly(t *testing.T) {
+	h := newHarness(t, Config{WaitFinal: 3 * time.Second}, nil)
+	defer close(h.fake.results)
+
+	h.mgr.OnVoiceStart(proto.AudioADPCM)
+	h.fake.results <- asr.Result{Final: true} // 空文本定稿
+	h.mgr.OnVoiceEnd()
+
+	start := time.Now()
+	stats := h.waitStats(t)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("空定稿应立即收尾，实际等了 %s", elapsed)
+	}
+	if stats.FinalText != "" {
+		t.Fatalf("不该有文本: %+v", stats)
+	}
+	if h.ctrl.count() != 1 {
+		t.Fatalf("done 应发一次，实际 %d", h.ctrl.count())
+	}
 }

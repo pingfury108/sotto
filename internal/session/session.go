@@ -49,6 +49,9 @@ type Config struct {
 	WaitFinal  time.Duration // voice.end 后等定稿的上限
 	QueueDepth int           // 音频队列帧数上限
 	SkipDone   bool          // 收尾不回 agent.status done（仅用于复现设备卡住）
+
+	// NewEngine 自定义识别引擎；nil 时按 ASR 配置用火山流式。
+	NewEngine func() Engine
 }
 
 // Handler 是 UI 侧回调。全部在非主线程调用，实现里自己切线程。
@@ -91,8 +94,14 @@ func (s Stats) Summary() string {
 		s.MissedFrames, s.DropPercent, s.BlockMiss, dev)
 }
 
-// asrClient 抽象 asr.Client，便于单测注入假实现。
-type asrClient interface {
+// Engine 是一次语音会话的识别引擎。
+//
+// 两种实现共用它：
+//   - asr.Client：火山双向流式（边发边出候选字）；
+//   - airvoice.Client：局域网整段识别（松手后一次性出文本）。
+//
+// 结果类型沿用 asr.Result：Text 是全量累计文本，Final 表示定稿。
+type Engine interface {
 	Connect(ctx context.Context) error
 	SendFrame(ctx context.Context, pcm []byte) error
 	SendEnd(ctx context.Context) error
@@ -105,7 +114,7 @@ type Manager struct {
 	ctrl   CtrlWriter
 	cfg    func() Config
 	h      Handler
-	newASR func(asr.Config) asrClient
+	newASR func(asr.Config) Engine
 
 	rrMu sync.Mutex
 	rr   *audio.Reassembler
@@ -123,7 +132,7 @@ func NewManager(ctrl CtrlWriter, cfg func() Config, h Handler) *Manager {
 		cfg:  cfg,
 		h:    h,
 		rr:   audio.NewReassembler(),
-		newASR: func(c asr.Config) asrClient {
+		newASR: func(c asr.Config) Engine {
 			return asr.New(c)
 		},
 	}
@@ -171,7 +180,11 @@ func (m *Manager) OnVoiceStart(format string) {
 		final:  make(chan struct{}),
 		ended:  make(chan struct{}),
 	}
-	s.asr = m.newASR(cfg.ASR)
+	if cfg.NewEngine != nil {
+		s.engine = cfg.NewEngine()
+	} else {
+		s.engine = m.newASR(cfg.ASR)
+	}
 
 	m.mu.Lock()
 	m.sess = s
@@ -245,7 +258,7 @@ func (m *Manager) Close() {
 type session struct {
 	mgr    *Manager
 	cfg    Config
-	asr    asrClient
+	engine Engine
 	format string
 
 	frames chan []byte
@@ -278,7 +291,7 @@ func (s *session) start() {
 // pump 连接 ASR 并把音频帧喂进去，最后发末帧。
 func (s *session) pump() {
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
-	err := s.asr.Connect(ctx)
+	err := s.engine.Connect(ctx)
 	cancel()
 	if err != nil {
 		s.mu.Lock()
@@ -295,38 +308,40 @@ func (s *session) pump() {
 
 	for frame := range s.frames {
 		fctx, fcancel := context.WithTimeout(context.Background(), sendTimeout)
-		err := s.asr.SendFrame(fctx, frame)
+		err := s.engine.SendFrame(fctx, frame)
 		fcancel()
 		if err != nil {
 			s.logf("ASR 发送失败：%v", err)
 			break
 		}
 	}
-	if err := s.asr.SendEnd(context.Background()); err != nil {
+	if err := s.engine.SendEnd(context.Background()); err != nil {
 		s.logf("ASR 末帧发送失败：%v", err)
 	}
 }
 
 // consume 消费识别结果：候选字回调，定稿后只记录文本（收尾统一走 finish）。
 func (s *session) consume() {
-	for r := range s.asr.Results() {
+	for r := range s.engine.Results() {
 		if r.Err != nil {
 			s.logf("ASR 错误：%v", r.Err)
 			continue
 		}
+		// 定稿优先处理：空文本的定稿也要收尾（静音/没听清时服务端会这样回），
+		// 否则会白等 WaitFinal 那么久。
+		if r.Final {
+			s.mu.Lock()
+			s.finalText = r.Text
+			s.mu.Unlock()
+			s.closeFinal()
+			return
+		}
 		if r.Text == "" {
 			continue
 		}
-		if !r.Final {
-			if s.mgr.h.OnPartial != nil {
-				s.mgr.h.OnPartial(r.Text)
-			}
-			continue
+		if s.mgr.h.OnPartial != nil {
+			s.mgr.h.OnPartial(r.Text)
 		}
-		s.mu.Lock()
-		s.finalText = r.Text
-		s.mu.Unlock()
-		s.closeFinal()
 	}
 }
 
@@ -433,7 +448,7 @@ func (s *session) finish() {
 		}
 		s.logf("%s", stats.Summary())
 
-		if err := s.asr.Close(); err != nil {
+		if err := s.engine.Close(); err != nil {
 			s.logf("ASR 关闭异常：%v", err)
 		}
 	})

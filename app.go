@@ -10,12 +10,19 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"sotto/internal/airvoice"
 	"sotto/internal/asr"
 	"sotto/internal/ble"
 	"sotto/internal/config"
 	"sotto/internal/inject"
 	"sotto/internal/proto"
 	"sotto/internal/session"
+)
+
+// 识别后端（界面分段控件的下标）。
+const (
+	backendVolcano  = 0
+	backendAirvoice = 1
 )
 
 // 连接状态。
@@ -38,6 +45,9 @@ type app struct {
 	tray  *mygo.Tray
 
 	// —— 表单（主线程）——
+	backend    int // 0 火山 / 1 空音
+	avURL      string
+	avToken    string
 	apiKey     string
 	wsURL      string
 	resource   string
@@ -79,10 +89,14 @@ type app struct {
 
 	// showFloating 的原子镜像：表单字段只在主线程写，后台回调读这个。
 	showFloatFlag atomic.Bool
+	backendFlag   atomic.Int32
 
 	// ASR/注入的当前快照：会话 goroutine 读它，主线程在 saveConfig 时更新。
 	asrCfg        asr.Config
 	injectModeStr string
+	engineBackend int
+	engineAVURL   string
+	engineAVToken string
 
 	// 候选字合并：120ms 内只刷最新一帧，首帧立即显示。
 	candText      string
@@ -126,6 +140,7 @@ func (a *app) applyConfig(c config.Config) {
 	a.showFloat = c.ShowFloating
 	a.mu.Lock()
 	a.asrCfg, a.injectModeStr = c.ASR(), c.InjectMode
+	a.engineBackend, a.engineAVURL, a.engineAVToken = a.backend, c.AirvoiceURL, c.AirvoiceToken
 	a.mu.Unlock()
 	switch c.InjectMode {
 	case config.InjectUnicode:
@@ -145,6 +160,11 @@ func (a *app) saveConfig() {
 		c.VolcanoWSURL = a.wsURL
 		c.VolcanoResourceID = a.resource
 		c.VolcanoModel = a.model
+		c.ASRBackend = config.BackendVolcano
+		if a.backend == backendAirvoice {
+			c.ASRBackend = config.BackendAirvoice
+		}
+		c.AirvoiceURL, c.AirvoiceToken = a.avURL, a.avToken
 		c.VolcanoNonstream = a.nonstream
 		c.VolcanoHotwords = a.hotwords
 		c.VolcanoContexts = a.contexts
@@ -160,9 +180,11 @@ func (a *app) saveConfig() {
 		a.logf("保存配置失败：%v", err)
 	}
 	a.showFloatFlag.Store(a.showFloat)
+	a.backendFlag.Store(int32(a.backend))
 	a.mu.Lock()
 	a.asrCfg = a.formASRNoLock()
 	a.injectModeStr = modes[a.injectMode]
+	a.engineBackend, a.engineAVURL, a.engineAVToken = a.backend, a.avURL, a.avToken
 	a.mu.Unlock()
 }
 
@@ -189,12 +211,21 @@ func resourceIndex(id string) int {
 func (a *app) sessionConfig() session.Config {
 	a.mu.Lock()
 	cfg, mode := a.asrCfg, a.injectModeStr
+	backend, url, token := a.engineBackend, a.engineAVURL, a.engineAVToken
 	a.mu.Unlock()
-	return session.Config{
+
+	c := session.Config{
 		ASR:       cfg,
 		Inject:    func(text string) (string, error) { return inject.Paste(text, mode) },
-		WaitFinal: 6 * time.Second,
+		WaitFinal: 8 * time.Second, // 整段识别（空音）比流式定稿稍慢
 	}
+	c.NewEngine = func() session.Engine {
+		if backend == backendAirvoice {
+			return airvoice.New(airvoice.Config{BaseURL: url, Token: token, Logf: a.logf})
+		}
+		return asr.New(cfg)
+	}
+	return c
 }
 
 // formASRNoLock 与 formASR 相同，但调用方已持有 a.mu。
@@ -448,14 +479,64 @@ func (a *app) pushCandidate(text string) {
 }
 
 // finishCandidate 会话结束：收起悬浮窗（注入已由会话层完成）。
+//
+// 火山模式有候选字，定稿即收；空音模式全程只有一个占位窗，所以把定稿文本
+// 先显示 0.8s 再收起，让用户看到"识别成了什么"。
 func (a *app) finishCandidate(text string) {
 	if !a.showFloatFlag.Load() {
 		return
 	}
-	a.hideFloating()
+	if a.backendFlag.Load() == backendAirvoice && text != "" {
+		a.showFloating(text, "识别完成")
+		go func() {
+			time.Sleep(800 * time.Millisecond)
+			a.hideFloating()
+		}()
+	} else {
+		a.hideFloating()
+	}
 	a.mu.Lock()
 	a.candText = ""
 	a.mu.Unlock()
+}
+
+// asrReset 清掉上一次的测试结果（切换后端时调用，避免串台）。
+func (a *app) asrReset() {
+	a.mu.Lock()
+	a.asrResult, a.asrOK = "", false
+	a.mu.Unlock()
+}
+
+// testAirvoice 探活局域网识别服务（GET /health）。
+func (a *app) testAirvoice(url, token string) {
+	a.mu.Lock()
+	if a.asrTesting {
+		a.mu.Unlock()
+		return
+	}
+	a.asrTesting, a.asrResult, a.asrOK = true, "", false
+	a.mu.Unlock()
+	a.refresh()
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err := airvoice.CheckHealth(ctx, airvoice.Config{BaseURL: url, Token: token})
+		a.mu.Lock()
+		a.asrTesting = false
+		if err != nil {
+			a.asrOK, a.asrResult = false, err.Error()
+		} else {
+			a.asrOK, a.asrResult = true, "局域网识别服务就绪（"+url+"）"
+		}
+		a.mu.Unlock()
+		if err != nil {
+			a.logf("空音测试失败：%v", err)
+		} else {
+			a.logf("空音测试成功：%s 就绪", url)
+		}
+		a.refresh()
+	}()
 }
 
 func (a *app) setConn(state, detail string) {
@@ -497,6 +578,10 @@ func (a *app) handleEvent(ev proto.Event) {
 			mgr.OnVoiceStart(ev.AudioFormat())
 		} else {
 			a.logf("voice.start（%s）但设备未就绪", ev.AudioFormat())
+		}
+		// 整段识别没有候选字，先给一个占位窗，免得用户以为没在听。
+		if a.backendFlag.Load() == backendAirvoice && a.showFloatFlag.Load() {
+			a.showFloating("正在听…", "识别中")
 		}
 	case proto.EventVoiceEnd:
 		if mgr := a.session(); mgr != nil {

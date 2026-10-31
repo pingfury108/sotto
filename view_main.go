@@ -215,50 +215,86 @@ func (a *app) cardStatus(c *ui.Context) {
 }
 
 func (a *app) cardASR(c *ui.Context) {
-	t := c.Theme()
-	testing, ok, result := a.asrSnapshot()
-	idx := resourceIndex(a.resource)
-
+	_, ok, result := a.asrSnapshot()
 	card(c, func() {
 		ui.Column(c).FillWidth().Gap(sp3).Children(func() {
-			ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
-				sectionTitle(c, "语音识别")
-				ui.Box(c).Grow(1)
-				if testing {
-					ui.Spinner(c)
-				}
-			})
+			sectionTitle(c, "语音识别")
 
-			// Key 是必须填的一项，单独占一行，右侧跟测试按钮。
-			ui.Row(c).FillWidth().Gap(sp2).AlignItems(ui.Center).Children(func() {
-				if ui.TextInput(c, &a.apiKey).Placeholder("粘贴火山 API Key").Password().Grow(1).Changed() {
-					a.saveConfig()
-				}
-				cfg := a.formASR()
-				ui.Button(c, "测试").OnClick(func() { a.testASR(cfg) })
-			})
+			// 后端：云端（有候选字）或局域网（整段识别，零出站）。
+			if ui.Segmented(c, &a.backend, "云端（火山）", "局域网（空音）").Changed() {
+				a.asrReset()
+				a.saveConfig()
+			}
 
-			// 资源代际：直接给结论（价格差 4 倍），不给一串 ID 让人填。
-			ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "资源").FontSize(fsBody).TextColor(t.TextMuted).Width(76).Shrink(0)
-				if ui.Segmented(c, &idx, resourceChoices[0].label, resourceChoices[1].label).Changed() {
-					a.resource = resourceChoices[idx].id
-					a.saveConfig()
-				}
-				ui.Box(c).Grow(1)
-			})
-			hint(c, resourceChoices[idx].price+" · "+resourceChoices[idx].id)
+			if a.backend == backendAirvoice {
+				a.fieldsAirvoice(c)
+			} else {
+				a.fieldsVolcano(c)
+			}
 
 			switch {
 			case result != "" && ok:
 				statusPill(c, "ok", result)
 			case result != "":
 				statusPill(c, "error", result)
-			case a.apiKey == "":
+			case a.backend == backendAirvoice && a.avURL == "":
+				statusPill(c, "warn", "还没有填局域网地址：手机 App 通知栏里显示的那个 host:port")
+			case a.backend == backendVolcano && a.apiKey == "":
 				statusPill(c, "warn", "还没有填 API Key：填好后点「测试」验证")
 			}
 		})
 	})
+}
+
+// fieldsVolcano 是云端（火山流式）那一组字段。
+func (a *app) fieldsVolcano(c *ui.Context) {
+	t := c.Theme()
+	testing, _, _ := a.asrSnapshot()
+	idx := resourceIndex(a.resource)
+
+	ui.Row(c).FillWidth().Gap(sp2).AlignItems(ui.Center).Children(func() {
+		if ui.TextInput(c, &a.apiKey).Placeholder("粘贴火山 API Key").Password().Grow(1).Changed() {
+			a.saveConfig()
+		}
+		cfg := a.formASR()
+		ui.Button(c, "测试").OnClick(func() { a.testASR(cfg) })
+		if testing {
+			ui.Spinner(c)
+		}
+	})
+
+	ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
+		ui.Text(c, "资源").FontSize(fsBody).TextColor(t.TextMuted).Width(76).Shrink(0)
+		if ui.Segmented(c, &idx, resourceChoices[0].label, resourceChoices[1].label).Changed() {
+			a.resource = resourceChoices[idx].id
+			a.saveConfig()
+		}
+		ui.Box(c).Grow(1)
+	})
+	hint(c, resourceChoices[idx].price+" · "+resourceChoices[idx].id)
+}
+
+// fieldsAirvoice 是局域网（空音）那一组字段：只需要 host:port 与可选 Token。
+func (a *app) fieldsAirvoice(c *ui.Context) {
+	testing, _, _ := a.asrSnapshot()
+
+	ui.Row(c).FillWidth().Gap(sp2).AlignItems(ui.Center).Children(func() {
+		if ui.TextInput(c, &a.avURL).Placeholder("192.168.32.145:8787").Grow(1).Changed() {
+			a.saveConfig()
+		}
+		url, token := a.avURL, a.avToken
+		ui.Button(c, "测试").OnClick(func() { a.testAirvoice(url, token) })
+		if testing {
+			ui.Spinner(c)
+		}
+	})
+	field(c, "Token", func() {
+		if ui.TextInput(c, &a.avToken).Placeholder("留空 = 手机端未开鉴权").Password().Changed() {
+			a.saveConfig()
+		}
+	})
+	hint(c, "手机与电脑同一 WiFi，App 里打开「局域网识别 API」。只填 host:port，不加 http:// 与路径。"+
+		"整段识别：没有实时候选字，松手后一次性出文本；音频不出内网、免费。")
 }
 
 func (a *app) cardOutput(c *ui.Context) {
@@ -355,7 +391,7 @@ func (a *app) viewSettings(c *ui.Context) {
 
 				card(c, func() {
 					ui.Column(c).FillWidth().Gap(sp3).Children(func() {
-						sectionTitle(c, "语音识别（高级）")
+						sectionTitle(c, "云端识别（高级）")
 						field(c, "资源 ID", func() {
 							if ui.TextInput(c, &a.resource).Placeholder(asr.DefaultResourceID).Changed() {
 								a.saveConfig()
@@ -381,7 +417,7 @@ func (a *app) viewSettings(c *ui.Context) {
 
 				card(c, func() {
 					ui.Column(c).FillWidth().Gap(sp3).Children(func() {
-						sectionTitle(c, "识别调优")
+						sectionTitle(c, "云端识别调优")
 						field(c, "热词", func() {
 							if ui.TextInput(c, &a.hotwords).Placeholder("伏羲, sotto, deploy.sh").Changed() {
 								a.saveConfig()
